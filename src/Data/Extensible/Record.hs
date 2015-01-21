@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell, PolyKinds, TypeFamilies, DataKinds, KindSignatures, FlexibleContexts, FlexibleInstances, FunctionalDependencies, MultiParamTypeClasses, UndecidableInstances, Rank2Types #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Data.Extensible.Record
@@ -23,6 +24,7 @@ module Data.Extensible.Record (
   , FieldValue
   , FieldLens
   , FieldName
+  , Has(..)
   -- * Internal
   , Labelable(..)
   , LabelPhantom
@@ -33,6 +35,21 @@ import Language.Haskell.TH
 import GHC.TypeLits hiding (Nat)
 import Data.Extensible.Inclusion
 import Data.Proxy
+
+-- | @FieldLens s@ is a type of lens that points a field named @s@.
+--
+-- @
+-- 'FieldLens' s = (s '∈' xs) => Lens' ('Record' xs) ('FieldValue' s)
+-- @
+--
+type FieldLens a s = forall f p. (Functor f, Labelable s p)
+  => p (FieldValue s) (f (FieldValue s)) -> a -> f a
+
+class Has a (s :: Symbol) where
+  theLens :: Proxy s -> FieldLens a s
+
+instance (s ∈ xs) => Has (Record xs) s where
+  theLens _ f = sector (fmap (Field :: FieldValue s -> Field s) . unlabel (Proxy :: Proxy s) f . getField)
 
 -- | Associates names with concrete types.
 type family FieldValue (s :: Symbol) :: *
@@ -47,15 +64,6 @@ instance (KnownSymbol s, Show (FieldValue s)) => Show (Field s) where
   showsPrec d f@(Field a) = showParen (d >= 1) $ showString (symbolVal f)
     . showString " @= "
     . showsPrec 1 a
-
--- | @FieldLens s@ is a type of lens that points a field named @s@.
---
--- @
--- 'FieldLens' s = (s '∈' xs) => Lens' ('Record' xs) ('FieldValue' s)
--- @
---
-type FieldLens s = forall f p xs. (Functor f, Labelable s p, s ∈ xs)
-  => p (FieldValue s) (f (FieldValue s)) -> Record xs -> f (Record xs)
 
 -- | When you see this type as an argument, it expects a 'FieldLens'.
 -- This type hooks the name of 'FieldLens' so that an expression @field \@= value@ has no ambiguousity.
@@ -88,22 +96,20 @@ infix 1 @=
 -- @
 -- type instance FieldValue "foo" = Int
 --
--- foo :: FieldLens "foo"
+-- foo :: Has "foo" a => FieldLens a "foo"
 -- @
 --
 -- The yielding field is a <http://hackage.haskell.org/package/lens/docs/Control-Lens-Lens.html#t:Lens Lens>.
 mkField :: String -> TypeQ -> DecsQ
 mkField s t = do
-  f <- newName "f"
+  let a = mkName "a"
   let st = litT (strTyLit s)
-  let vt = conT ''FieldValue `appT` st
-  let fcon = sigE (conE 'Field) $ arrowT `appT` vt `appT` (conT ''Field `appT` st)
-  let lbl = conE 'Proxy `sigE` (conT ''Proxy `appT` st)
-  let wf = varE '(.) `appE` (varE 'fmap `appE` fcon)
-        `appE` (varE '(.) `appE` (varE 'unlabel `appE` lbl `appE` varE f) `appE` varE 'getField)
-  sequence $ [tySynInstD ''FieldValue (tySynEqn [litT (strTyLit s)] t)
+  sequence $ [tySynInstD ''FieldValue (tySynEqn [st] t)
     , sigD (mkName s)
-      $ forallT [] (return [])
-      $ conT ''FieldLens `appT` st
-    , funD (mkName s) [clause [varP f] (normalB $ varE 'sector `appE` wf) []]
+      $ forallT [PlainTV a] (sequence [classP ''Has [st, varT a]])
+      $ conT ''FieldLens `appT` varT a `appT` st
+    , valD (varP $ mkName s) (normalB $ varE 'theLens `appE` sigE (conE 'Proxy) (conT ''Proxy `appT` st)) []
     ]
+
+-- mkStatic :: String -> [String] -> DecsQ
+-- mkStatic
