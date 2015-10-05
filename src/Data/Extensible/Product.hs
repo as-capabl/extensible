@@ -56,23 +56,11 @@ import Data.Extensible.Class
 import Data.Functor.Identity
 import Data.Extensible.Wrapper
 import Data.Profunctor.Unsafe
-
--- | The type of extensible products.
---
--- @(:*) :: (k -> *) -> [k] -> *@
---
-data (h :: k -> *) :* (s :: [k]) where
-  Nil :: h :* '[]
-  Tree :: !(h x)
-    -> h :* Half xs
-    -> h :* Half (Tail xs)
-    -> h :* (x ': xs)
-
-deriving instance Typeable (:*)
+import Data.Extensible.Struct
 
 -- | /O(1)/ Extract the head element.
 hhead :: h :* (x ': xs) -> h x
-hhead (Tree a _ _) = a
+hhead = a
 {-# INLINE hhead #-}
 
 -- | /O(log n)/ Extract the tail of the product.
@@ -84,12 +72,6 @@ htail (Tree _ Nil _) = unsafeCoerce Nil
 huncons :: forall h x xs. h :* (x ': xs) -> (h x, h :* xs)
 huncons t@(Tree a _ _) = (a, htail t)
 {-# INLINE huncons #-}
-
--- | An alias for ('<:').
-(<:*) :: forall h x xs. h x -> h :* xs -> h :* (x ': xs)
-a <:* Tree b c d = Tree a (lemmaHalfTail (Proxy :: Proxy (Tail xs)) $ b <: d) c
-a <:* Nil = Tree a Nil Nil
-infixr 0 <:*
 
 -- | /O(log n)/ Add an element to a product.
 (<:) :: h x -> h :* xs -> h :* (x ': xs)
@@ -106,7 +88,7 @@ infixr 0 <:
 hmap :: (forall x. g x -> h x) -> g :* xs -> h :* xs
 hmap t (Tree h a b) = Tree (t h) (hmap t a) (hmap t b)
 hmap _ Nil = Nil
-
+{-
 -- | Transform every elements in a product, preserving the order.
 htrans :: (forall x. g x -> h (t x)) -> g :* xs -> h :* Map t xs
 htrans t (Tree h a b) = unsafeCoerce (Tree (t h)) (htrans t a) (htrans t b)
@@ -206,29 +188,6 @@ pieceAt_ i f = flip go i where
   go Nil = error "Impossible"
 {-# INLINE pieceAt_ #-}
 
-{-# DEPRECATED sectorAt "Use pieceAt" #-}
--- | The legacy name for 'pieceAt'
-sectorAt :: Functor f => Membership xs x -> (h x -> f (h x)) -> h :* xs -> f (h :* xs)
-sectorAt = pieceAt
-
-{-# DEPRECATED sector "Use piece" #-}
--- | The legacy name for 'piece'
-sector :: (Functor f, x ∈ xs) => (h x -> f (h x)) -> h :* xs -> f (h :* xs)
-sector = piece
-
--- | Given a function that maps types to values, we can "collect" entities all you want.
-class Generate (xs :: [k]) where
-  -- | /O(n)/ Generate a product with the given function.
-  hgenerate :: Applicative f => (forall x. Membership xs x -> f (h x)) -> f (h :* xs)
-
-instance Generate '[] where
-  hgenerate _ = pure Nil
-  {-# INLINE hgenerate #-}
-
-instance (Generate (Half xs), Generate (Half (Tail xs))) => Generate (x ': xs) where
-  hgenerate f = Tree <$> f here <*> hgenerate (f . navL) <*> hgenerate (f . navR)
-  {-# INLINE hgenerate #-}
-
 -- | Pure version of 'hgenerate'.
 --
 -- @
@@ -255,13 +214,4 @@ instance (c x, Forall c (Half xs), Forall c (Half (Tail xs))) => Forall c (x ': 
     <*> hgenerateFor proxy (f . navL)
     <*> hgenerateFor proxy (f . navR)
   {-# INLINE hgenerateFor #-}
-
--- | Pure version of 'hgenerateFor'.
-htabulateFor :: Forall c xs => proxy c -> (forall x. c x => Membership xs x -> h x) -> h :* xs
-htabulateFor p f = runIdentity (hgenerateFor p (Identity #. f))
-{-# INLINE htabulateFor #-}
-
--- | GHC can't prove this
-lemmaHalfTail :: proxy xs -> h :* (x ': Half (Tail xs)) -> h :* (Half (x ': xs))
-lemmaHalfTail _ = unsafeCoerce
-{-# INLINE lemmaHalfTail #-}
+-}
