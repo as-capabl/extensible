@@ -57,7 +57,7 @@ import Data.Functor.Identity
 import Data.Extensible.Wrapper
 import Data.Profunctor.Unsafe
 import Data.Extensible.Struct
-
+{-
 -- | /O(1)/ Extract the head element.
 hhead :: h :* (x ': xs) -> h x
 hhead = a
@@ -145,16 +145,6 @@ hdistribute :: (Functor f, Generate xs) => f (h :* xs) -> Comp f h :* xs
 hdistribute = hcollect id
 {-# INLINE hdistribute #-}
 
--- | /O(log n)/ Pick up an elemtnt.
-hlookup :: Membership xs x -> h :* xs -> h x
-hlookup = view . pieceAt
-{-# INLINABLE hlookup #-}
-
--- | Flipped 'hlookup'
-hindex :: h :* xs -> Membership xs x -> h x
-hindex = flip hlookup
-{-# INLINE hindex #-}
-
 -- | 'hmap' with 'Membership's.
 hmapWithIndex :: forall g h xs. (forall x. Membership xs x -> g x -> h x) -> g :* xs -> h :* xs
 hmapWithIndex f = go id where
@@ -179,13 +169,7 @@ instance Functor f => Extensible f (->) (:*) where
 
 pieceAt_ :: forall (xs :: [k]) (x :: k) (h :: k -> *) (f :: * -> *). Functor f
   => Membership xs x -> (h x -> f (h x)) -> h :* xs -> f (h :* xs)
-pieceAt_ i f = flip go i where
-  go :: forall t. h :* t -> Membership t x -> f (h :* t)
-  go (Tree h a b) = navigate
-    (\Here -> fmap (\h' -> Tree h' a b) (f h))
-    (fmap (\a' -> Tree h a' b) . go a)
-    (fmap (\b' -> Tree h a b') . go b)
-  go Nil = error "Impossible"
+pieceAt_ i f p = fmap (\a -> modify )(f (hindex p i))
 {-# INLINE pieceAt_ #-}
 
 -- | Pure version of 'hgenerate'.

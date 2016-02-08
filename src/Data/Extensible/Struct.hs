@@ -75,5 +75,5 @@ hindex (HProduct ar) (getMemberId -> I# i) = case indexSmallArray# ar i of
 hmap :: (forall x. g x -> h x) -> g :* xs -> h :* xs
 hmap t p = runST $ newFrom p (const t) >>= unsafeFreeze
 
-hmapWithIndex :: (forall x. g x -> h x) -> g :* xs -> h :* xs
+hmapWithIndex :: (forall x. Membership xs x -> g x -> h x) -> g :* xs -> h :* xs
 hmapWithIndex t p = runST $ newFrom p t >>= unsafeFreeze
