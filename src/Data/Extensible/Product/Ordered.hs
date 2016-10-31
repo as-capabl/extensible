@@ -40,6 +40,7 @@ import Data.Extensible.Wrapper
 -- import Control.Comonad
 import Control.Monad.Writer
 import qualified Data.Sequence as Seq
+import Data.Sequence (ViewL((:<)), (|>))
 
 {-
 data ListProd (h :: k -> *) (s :: [k]) where
@@ -63,19 +64,28 @@ toListProd (Tree h a b) = ListCons h (unInterleave (toListProd a) (toListProd b)
 --
 -- @'hfoldMap' f . 'hmap' g ≡ 'hfoldMap' (f . g)@
 hfoldMap :: Monoid a => (forall x. h x -> a) -> h :* xs -> a
-hfoldMap f Nil = mempty
-hfoldMap f (Tree h a b) = f h `mappend` htraverseHelper f (Seq.fromList [SomeProd a, SomeProd b])
+hfoldMap _ Nil = mempty
+hfoldMap f (Tree h a b) = f h `mappend` hfoldMapHelper f (Seq.fromList [SomeProd a, SomeProd b])
+{-# INLINE hfoldMap #-}
 
 data SomeProd h where
   SomeProd :: h :* xs -> SomeProd h
 
-htraverseHelper :: Monoid a => (forall x. h x -> a) ->
+hfoldMapHelper :: Monoid a => (forall x. h x -> a) ->
                    Seq.Seq (SomeProd h) -> a
-htraverseHelper f (Seq.viewl -> Seq.EmptyL) = mempty
-htraverseHelper f (Seq.viewl -> (SomeProd Nil) Seq.:< rest) =
-    htraverseHelper f rest
-htraverseHelper f (Seq.viewl -> (SomeProd (Tree h a b)) Seq.:< rest) =
-    f h `mappend` (htraverseHelper f (rest Seq.|> SomeProd a Seq.|> SomeProd b))
+hfoldMapHelper f (Seq.viewl -> SomeProd Nil :< rest) =
+    hfoldMapHelper f rest
+hfoldMapHelper f (Seq.viewl -> SomeProd (Tree h1 a1 b1) :< rest) =
+  f h1 `mappend`
+    case Seq.viewl rest of
+      SomeProd (Tree h2 a2 b2) :< rest' ->
+        f h2 `mappend`
+          hfoldMapHelper f (rest' |> SomeProd a1 |> SomeProd a2 |> SomeProd b1 |> SomeProd b2)
+      SomeProd Nil :< rest' ->
+        hfoldMapHelper f rest'
+      Seq.EmptyL ->
+        hfoldMapHelper f $ Seq.fromList [SomeProd a1, SomeProd b1]
+hfoldMapHelper _ _ = mempty
 
 -- | Traverse all elements and combine the result sequentially.
 -- @
