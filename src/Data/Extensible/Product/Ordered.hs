@@ -39,6 +39,7 @@ import Data.Extensible.Wrapper
 -- import Data.Profunctor.Sieve
 -- import Control.Comonad
 import Control.Monad.Writer
+import qualified Data.Sequence as Seq
 
 {-
 data ListProd (h :: k -> *) (s :: [k]) where
@@ -62,7 +63,19 @@ toListProd (Tree h a b) = ListCons h (unInterleave (toListProd a) (toListProd b)
 --
 -- @'hfoldMap' f . 'hmap' g ≡ 'hfoldMap' (f . g)@
 hfoldMap :: Monoid a => (forall x. h x -> a) -> h :* xs -> a
-hfoldMap f = execWriter . htraverse (\hx -> tell (f hx) >> return (Const' ()))
+hfoldMap f Nil = mempty
+hfoldMap f (Tree h a b) = f h `mappend` htraverseHelper f (Seq.fromList [SomeProd a, SomeProd b])
+
+data SomeProd h where
+  SomeProd :: h :* xs -> SomeProd h
+
+htraverseHelper :: Monoid a => (forall x. h x -> a) ->
+                   Seq.Seq (SomeProd h) -> a
+htraverseHelper f (Seq.viewl -> Seq.EmptyL) = mempty
+htraverseHelper f (Seq.viewl -> (SomeProd Nil) Seq.:< rest) =
+    htraverseHelper f rest
+htraverseHelper f (Seq.viewl -> (SomeProd (Tree h a b)) Seq.:< rest) =
+    f h `mappend` (htraverseHelper f (rest Seq.|> SomeProd a Seq.|> SomeProd b))
 
 -- | Traverse all elements and combine the result sequentially.
 -- @
@@ -75,6 +88,13 @@ htraverse f Nil = pure Nil
 htraverse f (Tree h a b) =
   (\h' (a', b') -> Tree h' a' b') <$> f h <*> htraverse2 f a b
 {-# INLINE htraverse #-}
+
+{-
+htraverseHelper :: Applicative f => (forall x. g x -> f (h x)) ->
+                   Seq (forall ys. g :* ys) -> f (h :* xs)
+htraverseHelper f (viewl -> EmptyL) = Nil
+htraverseHelper f (viewl -> Tree h a b Seq.:< rest) =
+-}
 
 htraverse2 :: Applicative f => (forall x. g x -> f (h x)) ->
               g :* xs -> g :* ys -> f (h :* xs, h :* ys)
