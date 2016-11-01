@@ -21,13 +21,14 @@ module Data.Extensible.Product.Ordered (
   , htraverse
   , hsequence
   , Forall (..)
+  , hgenerate
+  , htabulate
   , hgenerateFor
   , htabulateFor) where
 
 import Data.Extensible.Internal
 -- import Data.Extensible.Internal.Rig
-import Data.Extensible.Product hiding
-  (hfoldMap, htraverse, hsequence, Forall, hgenerateFor, htabulateFor)
+import Data.Extensible.Product ((:*)(..))
 import Unsafe.Coerce
 #if !MIN_VERSION_base(4,8,0)
 import Control.Applicative
@@ -82,6 +83,8 @@ foldMapListProd :: Monoid a => (forall x. g x -> a) -> ListProd g xs -> a
 foldMapListProd _ ListNil = mempty
 foldMapListProd f (ListCons a as) = f a `mappend` foldMapListProd f as
 
+
+
 -- | Map elements to a monoid and combine the results.
 --
 -- @'hfoldMap' f . 'hmap' g ≡ 'hfoldMap' (f . g)@
@@ -105,6 +108,35 @@ htraverse f = (fromListProd <$>) . traverseListProd f . toListProd
 hsequence :: Applicative f => Comp f h :* xs -> f (h :* xs)
 hsequence = htraverse getComp
 {-# INLINE hsequence #-}
+
+
+-- | Given a function that maps types to values, we can "collect" entities all you want.
+class Generate (xs :: [k]) where
+  -- | /O(n)/ Generate a product with the given function.
+  hgenListProd :: Applicative f => (forall x. Membership xs x -> f (h x)) -> f (ListProd h xs)
+
+instance Generate '[] where
+  hgenListProd _ = pure ListNil
+  {-# INLINE hgenListProd #-}
+
+instance Generate xs => Generate (x ': xs) where
+  hgenListProd f = ListCons <$> f here <*> hgenListProd (f . navNext)
+  {-# INLINE hgenListProd #-}
+
+hgenerate :: (Generate xs, Applicative f) =>
+             (forall x. Membership xs x -> f (h x)) -> f (h :* xs)
+hgenerate f = fromListProd <$> hgenListProd f
+
+-- | Pure version of 'hgenerate'.
+--
+-- @
+-- 'hmap' f ('htabulate' g) ≡ 'htabulate' (f . g)
+-- 'htabulate' ('hindex' m) ≡ m
+-- 'hindex' ('htabulate' k) ≡ k
+-- @
+htabulate :: Generate xs => (forall x. Membership xs x -> h x) -> h :* xs
+htabulate f = runIdentity (hgenerate (Identity #. f))
+{-# INLINE htabulate #-}
 
 
 -- | Guarantees the all elements satisfies the predicate.
