@@ -7,7 +7,8 @@
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Data.Extensible.Product.Ordered
--- Copyright   :  (c) Hidenori Azuma 2016
+-- Copyright   :  (c) Fumiaki Kinoshita, 2015
+--                    Hidenori Azuma, 2016
 -- License     :  BSD3
 --
 -- Maintainer  :  Fumiaki Kinoshita <fumiexcel@gmail.com>
@@ -20,39 +21,38 @@ module Data.Extensible.Product.Ordered (
   hfoldMap
   , htraverse
   , hsequence
-  , Forall (..)
   , hgenerate
-  , htabulate
-  , hgenerateFor
-  , htabulateFor) where
+  , hgenerateFor) where
 
 import Data.Extensible.Internal
 -- import Data.Extensible.Internal.Rig
 import Data.Extensible.Product ((:*)(..))
+import qualified Data.Extensible.Product as Xu
 import Unsafe.Coerce
 #if !MIN_VERSION_base(4,8,0)
 import Control.Applicative
 #endif
-import Data.Monoid
--- import Data.Typeable (Typeable)
+-- import Data.Monoid
+import Data.Typeable (Typeable)
 -- import Data.Extensible.Class
-import Data.Functor.Identity
+-- import Data.Functor.Identity
 import Data.Extensible.Wrapper
 import Data.Profunctor.Unsafe
 -- import Data.Profunctor.Rep
 -- import Data.Profunctor.Sieve
 -- import Control.Comonad
-import Control.Monad.Writer
-import qualified Data.Sequence as Seq
-import Data.Sequence (ViewL((:<)), (|>))
+-- import Control.Monad.Writer
+-- import qualified Data.Sequence as Seq
+-- import Data.Sequence (ViewL((:<)), (|>))
 
 
 data ListProd (h :: k -> *) (s :: [k]) where
   ListNil :: ListProd h '[]
   ListCons :: !(h x) -> ListProd h xs -> ListProd h (x ': xs)
 
+deriving instance Typeable ListProd
 
-fromListProd :: ListProd h k -> (h :* k)
+fromListProd :: ListProd h k -> h :* k
 fromListProd ListNil = Nil
 fromListProd (ListCons x xs) = let (a, b) = interleave xs in Tree x (fromListProd a) (fromListProd b)
   where
@@ -62,11 +62,11 @@ fromListProd (ListCons x xs) = let (a, b) = interleave xs in Tree x (fromListPro
       ListCons b rest ->
         let (as, bs) = interleave rest in (ListCons a as, unsafeCoerce $ ListCons b bs)
       ListNil -> (ListCons a ListNil, ListNil)
+{-# INLINE[1] fromListProd #-}
 
-
-toListProd :: (h :* k) -> ListProd h k
+toListProd :: h :* k -> ListProd h k
 toListProd Nil = ListNil
-toListProd (Tree h a b) = ListCons h (unInterleave (toListProd a) (toListProd b))
+toListProd (Tree h a0 b0) = ListCons h (unInterleave (toListProd a0) (toListProd b0))
   where
     unInterleave ::
       forall h xs ys. Tail xs ~ ys =>
@@ -74,15 +74,26 @@ toListProd (Tree h a b) = ListCons h (unInterleave (toListProd a) (toListProd b)
     unInterleave (ListCons a as) bs =
       unsafeCoerce $ ListCons a (unInterleave bs (unsafeCoerce as) :: ListProd h ys)
     unInterleave ListNil _ = unsafeCoerce ListNil
+{-# INLINE [1] toListProd #-}
 
 traverseListProd :: Applicative f => (forall x. g x -> f (h x)) -> ListProd g xs -> f (ListProd h xs)
 traverseListProd _ ListNil = pure ListNil
-traverseListProd f (ListCons a as) = ListCons <$> (f a) <*> traverseListProd f as
+traverseListProd f (ListCons a as) = ListCons <$> f a <*> traverseListProd f as
 
 foldMapListProd :: Monoid a => (forall x. g x -> a) -> ListProd g xs -> a
 foldMapListProd _ ListNil = mempty
 foldMapListProd f (ListCons a as) = f a `mappend` foldMapListProd f as
 
+mapListProd :: (forall x. g x -> h x) -> ListProd g xs -> ListProd h xs
+mapListProd _ ListNil = ListNil
+mapListProd f (ListCons a as) = f a `ListCons` mapListProd f as
+
+{-# RULES
+"fromListProd . toListProd" forall l. fromListProd (toListProd l) = l
+"toListProd . fromListProd" forall l. toListProd (fromListProd l) = l
+"toListProd . hmap . fromListProd"
+    forall (f :: forall x. g x -> h x) l. toListProd (Xu.hmap f (fromListProd l)) = mapListProd f l
+ #-}
 
 
 -- | Map elements to a monoid and combine the results.
@@ -110,59 +121,16 @@ hsequence = htraverse getComp
 {-# INLINE hsequence #-}
 
 
--- | Given a function that maps types to values, we can "collect" entities all you want.
-class Generate (xs :: [k]) where
-  -- | /O(n)/ Generate a product with the given function.
-  hgenListProd :: Applicative f => (forall x. Membership xs x -> f (h x)) -> f (ListProd h xs)
-
-instance Generate '[] where
-  hgenListProd _ = pure ListNil
-  {-# INLINE hgenListProd #-}
-
-instance Generate xs => Generate (x ': xs) where
-  hgenListProd f = ListCons <$> f here <*> hgenListProd (f . navNext)
-  {-# INLINE hgenListProd #-}
-
-hgenerate :: (Generate xs, Applicative f) =>
+-- | /O(n)/ Generate a product with the given function.
+hgenerate :: (Xu.Generate xs, Applicative f) =>
              (forall x. Membership xs x -> f (h x)) -> f (h :* xs)
-hgenerate f = fromListProd <$> hgenListProd f
-
--- | Pure version of 'hgenerate'.
---
--- @
--- 'hmap' f ('htabulate' g) ≡ 'htabulate' (f . g)
--- 'htabulate' ('hindex' m) ≡ m
--- 'hindex' ('htabulate' k) ≡ k
--- @
-htabulate :: Generate xs => (forall x. Membership xs x -> h x) -> h :* xs
-htabulate f = runIdentity (hgenerate (Identity #. f))
-{-# INLINE htabulate #-}
+hgenerate f = hsequence $ Xu.htabulate (Comp #. f)
+{-# INLINE hgenerate #-}
 
 
--- | Guarantees the all elements satisfies the predicate.
-class Forall c (xs :: [k]) where
-  -- | /O(n)/ Analogous to 'hgenerate', but it also supplies a context @c x@ for every elements in @xs@.
-  hgenForListProd :: Applicative f =>
-                     proxy c -> (forall x. c x => Membership xs x -> f (h x)) -> f (ListProd h xs)
-
-instance Forall c '[] where
-  hgenForListProd _ _ = pure ListNil
-  {-# INLINE hgenForListProd #-}
-
-instance (c x, Forall c xs) => Forall c (x ': xs) where
-  hgenForListProd proxy f = ListCons
-    <$> f here
-    <*> hgenForListProd proxy (f . navNext)
-  {-# INLINE hgenForListProd #-}
-
-hgenerateFor :: (Applicative f, Forall c xs) => proxy c ->
+-- | /O(n)/ Analogous to 'hgenerate', but it also supplies a context @c x@ for every elements in @xs@.
+hgenerateFor :: (Xu.Forall c xs, Applicative f) => proxy c ->
                 (forall x. c x => Membership xs x -> f (h x)) -> f (h :* xs)
-hgenerateFor proxy f = fromListProd <$> hgenForListProd proxy f
+hgenerateFor proxy f = hsequence $ Xu.htabulateFor proxy (Comp #. f)
 {-# INLINE hgenerateFor #-}
-
--- | Pure version of 'hgenerateFor'.
-htabulateFor :: Forall c xs => proxy c ->
-                (forall x. c x => Membership xs x -> h x) -> h :* xs
-htabulateFor p f = runIdentity (hgenerateFor p (Identity #. f))
-{-# INLINE htabulateFor #-}
 
