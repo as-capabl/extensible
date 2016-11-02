@@ -4,22 +4,50 @@
 {-# LANGUAGE MultiParamTypeClasses, UndecidableInstances #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+
+
 -----------------------------------------------------------------------------
 -- |
 -- Module      :  Data.Extensible.Product.Ordered
--- Copyright   :  (c) Fumiaki Kinoshita, 2015
---                    Hidenori Azuma, 2016
+-- Copyright   :  (c) Hidenori Azuma, 2016
+--                    (Adapted from '../Product.hs' (c) Fumiaki Kinoshita, 2015)
 -- License     :  BSD3
 --
 -- Maintainer  :  Fumiaki Kinoshita <fumiexcel@gmail.com>
 -- Stability   :  experimental
 -- Portability :  non-portable
 --
-------------------------------------------------------------------------
+-- Several functions of h :* xs defined at Data.Extensible.Product module
+-- does not consider the type ordering of parameter xs
+-- when they construct Monoid or Applicative composition.
+--
+-- This module provides another version of them that respects the order
+-- even for Monoid or Applicative effects.
+--
+-- But it takes some run time cost. So it's your choice which one you use.
+--
+-- To use ordered version, you need to import this module explicitly.
+--
+-- @
+-- import Data.Extensible (htraverse)
+-- import qualified Data.Extensible.Product.Ordered as Xo
+--
+-- ...
+--
+-- ... = htraverse f record -- doesn't consider the order of effects
+--
+-- ... = Xo.htraverse f record -- does consider the order of effects
+-- @
+--
+-----------------------------------------------------------------------------
+
 module Data.Extensible.Product.Ordered (
   -- * Ordered variations of basic operations
+  -- $module_desc
   hfoldMap
+  , hfoldMapWithIndex
   , htraverse
+  , htraverseWithIndex
   , hsequence
   , hgenerate
   , hgenerateFor) where
@@ -43,9 +71,11 @@ import Data.Profunctor.Unsafe
 -- import Control.Comonad
 -- import Control.Monad.Writer
 -- import qualified Data.Sequence as Seq
--- import Data.Sequence (ViewL((:<)), (|>))
+  -- import Data.Sequence (ViewL((:<)), (|>))
 
+{-$ module
 
+-}
 data ListProd (h :: k -> *) (s :: [k]) where
   ListNil :: ListProd h '[]
   ListCons :: !(h x) -> ListProd h xs -> ListProd h (x ': xs)
@@ -80,19 +110,48 @@ traverseListProd :: Applicative f => (forall x. g x -> f (h x)) -> ListProd g xs
 traverseListProd _ ListNil = pure ListNil
 traverseListProd f (ListCons a as) = ListCons <$> f a <*> traverseListProd f as
 
+traverseWithIndexListProd :: forall f g h xs. Applicative f
+  => (forall x. Membership xs x -> g x -> f (h x)) -> ListProd g xs -> f (ListProd h xs)
+traverseWithIndexListProd f = go id
+  where
+    go :: (forall x. Membership t x -> Membership xs x) -> ListProd g t -> f (ListProd h t)
+    go k (ListCons a as) = ListCons <$> f (k here) a <*> go (k . navNext) as
+    go _ ListNil = pure ListNil
+{-# INLINE traverseWithIndexListProd #-}
+
 foldMapListProd :: Monoid a => (forall x. g x -> a) -> ListProd g xs -> a
 foldMapListProd _ ListNil = mempty
 foldMapListProd f (ListCons a as) = f a `mappend` foldMapListProd f as
 
+foldMapWithIndexListProd :: forall g a xs. Monoid a
+  => (forall x. Membership xs x -> g x -> a) -> ListProd g xs -> a
+foldMapWithIndexListProd f = go id
+  where
+    go :: (forall x. Membership t x -> Membership xs x) -> ListProd g t -> a
+    go k (ListCons a as) = f (k here) a `mappend` go (k . navNext) as
+    go _ ListNil = mempty
+{-# INLINE foldMapWithIndexListProd #-}
+
 mapListProd :: (forall x. g x -> h x) -> ListProd g xs -> ListProd h xs
 mapListProd _ ListNil = ListNil
 mapListProd f (ListCons a as) = f a `ListCons` mapListProd f as
+
+mapWithIndexListProd :: forall g h xs. (forall x. Membership xs x -> g x -> h x)
+  -> ListProd g xs -> ListProd h xs
+mapWithIndexListProd f = go id
+  where
+    go :: (forall x. Membership t x -> Membership xs x) -> ListProd g t -> ListProd h t
+    go k (ListCons a as) = f (k here) a `ListCons` go (k . navNext) as
+    go _ ListNil = ListNil
 
 {-# RULES
 "fromListProd . toListProd" forall l. fromListProd (toListProd l) = l
 "toListProd . fromListProd" forall l. toListProd (fromListProd l) = l
 "toListProd . hmap . fromListProd"
     forall (f :: forall x. g x -> h x) l. toListProd (Xu.hmap f (fromListProd l)) = mapListProd f l
+"toListProd . hmapWithIndex . fromListProd"
+    forall (f :: forall x. Membership xs x -> g x -> h x) l.
+        toListProd (Xu.hmapWithIndex f (fromListProd l)) = mapWithIndexListProd f l
  #-}
 
 
@@ -104,6 +163,12 @@ hfoldMap f = foldMapListProd f . toListProd
 {-# INLINE hfoldMap #-}
 
 
+-- | 'hfoldMap' with the membership of elements.
+hfoldMapWithIndex :: forall g a xs. Monoid a
+  => (forall x. Membership xs x -> g x -> a) -> g :* xs -> a
+hfoldMapWithIndex f = foldMapWithIndexListProd f . toListProd
+
+
 -- | Traverse all elements and combine the result sequentially.
 -- @
 -- htraverse (fmap f . g) ≡ fmap (hmap f) . htraverse g
@@ -113,6 +178,13 @@ hfoldMap f = foldMapListProd f . toListProd
 htraverse :: Applicative f => (forall x. g x -> f (h x)) -> g :* xs -> f (h :* xs)
 htraverse f = (fromListProd <$>) . traverseListProd f . toListProd
 {-# INLINE htraverse #-}
+
+
+-- | 'htraverse' with 'Membership's.
+htraverseWithIndex :: forall f g h xs. Applicative f
+  => (forall x. Membership xs x -> g x -> f (h x)) -> g :* xs -> f (h :* xs)
+htraverseWithIndex f = (fromListProd <$>) . traverseWithIndexListProd f . toListProd
+{-# INLINE htraverseWithIndex #-}
 
 
 -- | 'sequence' analog for extensible products
