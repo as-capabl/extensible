@@ -2,9 +2,6 @@
 {-# LANGUAGE ViewPatterns, ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE MultiParamTypeClasses, UndecidableInstances #-}
-{-# LANGUAGE TupleSections #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 
 -----------------------------------------------------------------------------
 -- |
@@ -43,7 +40,6 @@
 
 module Data.Extensible.Product.Ordered (
   -- * Ordered variations of basic operations
-  -- $module_desc
   hfoldMap
   , hfoldMapWithIndex
   , htraverse
@@ -60,22 +56,13 @@ import Unsafe.Coerce
 #if !MIN_VERSION_base(4,8,0)
 import Control.Applicative
 #endif
--- import Data.Monoid
 import Data.Typeable (Typeable)
--- import Data.Extensible.Class
--- import Data.Functor.Identity
 import Data.Extensible.Wrapper
 import Data.Profunctor.Unsafe
--- import Data.Profunctor.Rep
--- import Data.Profunctor.Sieve
--- import Control.Comonad
--- import Control.Monad.Writer
--- import qualified Data.Sequence as Seq
-  -- import Data.Sequence (ViewL((:<)), (|>))
 
-{-$ module
-
--}
+--
+-- List structure product (only for internal use)
+--
 data ListProd (h :: k -> *) (s :: [k]) where
   ListNil :: ListProd h '[]
   ListCons :: !(h x) -> ListProd h xs -> ListProd h (x ': xs)
@@ -154,6 +141,10 @@ mapWithIndexListProd f = go id
         toListProd (Xu.hmapWithIndex f (fromListProd l)) = mapWithIndexListProd f l
  #-}
 
+
+--
+-- Reimplementation of Data.Extensible.Product
+--
 
 -- | Map elements to a monoid and combine the results.
 --
